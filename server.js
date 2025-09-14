@@ -8,7 +8,7 @@ app.use(express.json());
 
 // ✅ Allow only your Netlify frontend
 app.use(cors({
-  origin: "https://john.netlifly.app"
+  origin: "https://spontaneous-kashata-6e9282.netlify.app"
 }));
 
 // Load credentials from Render Environment Variables
