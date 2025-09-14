@@ -9,7 +9,7 @@ app.use(express.json());
 // ✅ Allow requests from multiple origins for development and production
 app.use(cors({
   origin: [
-    "https://testpayments254.netlify.app",
+    "https://deluxe-douhua-e28021.netlify.app",
     "http://localhost:5000",
     "http://0.0.0.0:5000",
     "http://127.0.0.1:5000"
@@ -230,6 +230,40 @@ app.post("/transactions/status", async (req, res) => {
 
   } catch (err) {
     console.error("Bulk Status Check Error:", err.message);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+// ========================
+// Check Balance (Simulated)
+// ========================
+app.post("/balance/check", async (req, res) => {
+  try {
+    const { phone } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({ success: false, message: "Phone number is required" });
+    }
+
+    // Simulate balance check delay
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    // Simulate balance with some variation
+    const baseBalance = 5000;
+    const variation = (Math.random() - 0.5) * 1000; // ±500 KSh variation
+    const balance = Math.max(0, baseBalance + variation);
+    
+    res.json({
+      success: true,
+      balance: Math.round(balance * 100) / 100, // Round to 2 decimal places
+      currency: "KSh",
+      phone,
+      timestamp: new Date().toISOString(),
+      message: "Balance retrieved successfully"
+    });
+
+  } catch (err) {
+    console.error("Balance Check Error:", err.message);
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
