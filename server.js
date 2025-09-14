@@ -6,9 +6,9 @@ require("dotenv").config();
 const app = express();
 app.use(express.json());
 
-// ✅ Allow only your Netlify frontend
+// ✅ Allow only your Netlify frontend (fix typo in domain)
 app.use(cors({
-  origin: "https://teststk.netlify.app"
+  origin: "https://stktest.netlify.app"
 }));
 
 // Load credentials from Render Environment Variables
@@ -27,12 +27,14 @@ app.post("/stkpush", async (req, res) => {
       return res.status(400).json({ success: false, message: "Phone and amount are required" });
     }
 
+    const reference = `ORDER_${Date.now()}`;
+
     // --- Initiate STK Push ---
     const payload = {
       payment_account_id: PAYMENT_ACCOUNT_ID,
       phone,
       amount,
-      reference: `ORDER_${Date.now()}`,
+      reference,
       description: "Payment via Spawiko API"
     };
 
@@ -79,20 +81,38 @@ app.post("/stkpush", async (req, res) => {
           return res.json({
             success: true,
             message: "Payment completed",
-            transaction_code: statusResult.transaction_code
+            transaction_code: statusResult.transaction_code,
+            phone,
+            amount,
+            reference,
+            checkout_request_id: checkoutRequestId
           });
         } else if (statusResult.status === "failed") {
-          return res.json({ success: false, message: "Payment failed" });
+          return res.json({
+            success: false,
+            message: "Payment failed",
+            phone,
+            amount,
+            reference,
+            checkout_request_id: checkoutRequestId
+          });
         }
       }
 
-      // Wait 5s before retry
       attempt++;
       await new Promise(resolve => setTimeout(resolve, 5000));
     }
 
     // Timeout if still pending
-    res.json({ success: false, message: "Payment status check timeout", lastStatus: statusResult });
+    res.json({
+      success: false,
+      message: "Payment status check timeout",
+      phone,
+      amount,
+      reference,
+      checkout_request_id: checkoutRequestId,
+      lastStatus: statusResult
+    });
 
   } catch (err) {
     console.error("STK Push Error:", err.message);
