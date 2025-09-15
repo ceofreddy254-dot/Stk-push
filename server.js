@@ -4,7 +4,6 @@ import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
-import fs from "fs";
 
 dotenv.config();
 
@@ -14,66 +13,37 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(express.json());
 
-// ✅ Serve static files
-app.use(express.static(path.join(__dirname, "public")));
+// ✅ Serve static files (index.html, etc.)
+app.use(express.static(path.join(__dirname, '.')));
 
-// ✅ Allow requests from multiple origins
-app.use(
-  cors({
-    origin:
-      process.env.NODE_ENV === "development"
-        ? ["http://localhost:5000", "http://127.0.0.1:5000"]
-        : ["https://radiant-souffle-6d1711.netlify.app"],
-    credentials: true,
-  })
-);
+// ✅ Allow requests from multiple origins for development and production
+app.use(cors({
+  origin: [
+    "https://funny-tanuki-b344b5.netlify.app",
+    "http://localhost:5000",
+    "http://0.0.0.0:5000",
+    "http://127.0.0.1:5000"
+  ],
+  credentials: true
+}));
 
-// ========================
-// Load credentials
-// ========================
+// Load credentials from Environment Variables
 const API_KEY = process.env.SPAWIKO_API_KEY;
 const API_SECRET = process.env.SPAWIKO_API_SECRET;
 const PAYMENT_ACCOUNT_ID = process.env.SPAWIKO_ACCOUNT_ID || 17;
 
 // ========================
-// In-memory + JSON DB
+// In-memory stores
 // ========================
 const balances = {}; // { phone: balance }
 const users = {}; // { email: { phone, email } }
 const phoneToEmail = {}; // { phone: email }
-const DB_FILE = path.join(__dirname, "db.json");
 
-// Load from JSON at startup
-function loadDB() {
-  if (fs.existsSync(DB_FILE)) {
-    const data = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-    Object.assign(balances, data.balances || {});
-    Object.assign(users, data.users || {});
-    Object.assign(phoneToEmail, data.phoneToEmail || {});
-  }
-}
-
-// Save to JSON
-function saveDB() {
-  const data = { balances, users, phoneToEmail };
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
-}
-
-// Load DB initially
-loadDB();
-
-// ========================
-// Helpers
-// ========================
-function formatError(message, details = null) {
-  return { success: false, message, details };
-}
-
+// Helper functions for user management
 function createUser(email, phone) {
   users[email] = { email, phone };
   phoneToEmail[phone] = email;
   if (!balances[phone]) balances[phone] = 0;
-  saveDB();
   return users[email];
 }
 
@@ -86,10 +56,10 @@ function getUserByPhone(phone) {
   return email ? users[email] : null;
 }
 
+// Helper functions for balance management
 function creditBalance(phone, amount) {
   if (!balances[phone]) balances[phone] = 0;
   balances[phone] += Number(amount);
-  saveDB();
   return balances[phone];
 }
 
@@ -98,94 +68,103 @@ function getBalance(phone) {
 }
 
 // ========================
-// User Registration
+// User Registration Endpoint
 // ========================
 app.post("/api/users", (req, res) => {
   try {
     const { email, phone } = req.body;
 
     if (!email || !phone) {
-      return res.status(400).json(formatError("Email and phone number are required"));
+      return res.status(400).json({ 
+        success: false, 
+        message: "Email and phone number are required" 
+      });
     }
 
+    // Validate phone format
     if (!phone.match(/^254[0-9]{9}$/)) {
-      return res
-        .status(400)
-        .json(formatError("Invalid phone number format. Use 254XXXXXXXXX"));
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid phone number format. Use 254XXXXXXXXX" 
+      });
     }
 
+    // Check if user already exists
     if (users[email] || phoneToEmail[phone]) {
-      return res
-        .status(409)
-        .json(formatError("User already exists with this email or phone number"));
+      return res.status(409).json({ 
+        success: false, 
+        message: "User already exists with this email or phone number" 
+      });
     }
 
+    // Create user
     const user = createUser(email, phone);
-
-    res.status(201).json({
+    
+    res.status(201).json({ 
       success: true,
       message: "User created successfully",
-      user: { email: user.email, phone: user.phone },
+      user: { email: user.email, phone: user.phone }
     });
+
   } catch (err) {
     console.error("User registration error:", err.message);
-    res.status(500).json(formatError("Internal server error", err.message));
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
 // ========================
-// Get User by Email
+// Get User by Email (for login)
 // ========================
 app.get("/api/users/email/:email", (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email);
     const user = getUserByEmail(email);
-
+    
     if (!user) {
-      return res.status(404).json(formatError("User not found"));
+      return res.status(404).json({ 
+        success: false, 
+        message: "User not found" 
+      });
     }
 
-    res.json({
+    res.json({ 
       success: true,
       email: user.email,
-      phone: user.phone,
+      phone: user.phone 
     });
+
   } catch (err) {
     console.error("Get user error:", err.message);
-    res.status(500).json(formatError("Internal server error", err.message));
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
 // ========================
-// STK Push (non-blocking)
+// Initiate STK Push + Poll Status
 // ========================
 app.post("/stkpush", async (req, res) => {
   try {
     const { phone, amount } = req.body;
 
     if (!phone || !amount) {
-      return res.status(400).json(formatError("Phone and amount are required"));
+      return res.status(400).json({ success: false, message: "Phone and amount are required" });
     }
 
-    if (isNaN(amount) || amount <= 0) {
-      return res.status(400).json(formatError("Invalid amount"));
-    }
-
+    // Validate that user exists
     const user = getUserByPhone(phone);
     if (!user) {
-      return res
-        .status(404)
-        .json(formatError("User not found. Please sign up first."));
+      return res.status(404).json({ success: false, message: "User not found. Please sign up first." });
     }
 
     const reference = `ORDER_${Date.now()}`;
 
+    // --- Initiate STK Push ---
     const payload = {
       payment_account_id: PAYMENT_ACCOUNT_ID,
       phone,
       amount,
       reference,
-      description: "PayFlow Deposit via M-Pesa",
+      description: "PayFlow Deposit via M-Pesa"
     };
 
     const stkResponse = await axios.post(
@@ -195,42 +174,97 @@ app.post("/stkpush", async (req, res) => {
         headers: {
           "X-API-Key": API_KEY,
           "X-API-Secret": API_SECRET,
-          "Content-Type": "application/json",
-        },
+          "Content-Type": "application/json"
+        }
       }
     );
 
     if (!stkResponse.data.success) {
-      return res
-        .status(400)
-        .json(formatError("STK push failed", stkResponse.data));
+      return res.status(400).json(stkResponse.data);
     }
 
     const checkoutRequestId = stkResponse.data.checkout_request_id;
 
-    return res.json({
-      success: true,
-      message: "STK push initiated. Awaiting confirmation...",
-      checkout_request_id: checkoutRequestId,
-      reference,
+    // --- Poll Payment Status ---
+    const maxAttempts = 24; // 2 minutes (5s * 24)
+    let attempt = 0;
+    let statusResult = null;
+
+    while (attempt < maxAttempts) {
+      const statusResponse = await axios.post(
+        "https://pay.spawiko.co.ke/api/v2/status.php",
+        { checkout_request_id: checkoutRequestId },
+        {
+          headers: {
+            "X-API-Key": API_KEY,
+            "X-API-Secret": API_SECRET,
+            "Content-Type": "application/json"
+          }
+        }
+      );
+
+      statusResult = statusResponse.data;
+
+      if (statusResult.success) {
+        if (statusResult.status === "completed") {
+          // ✅ Credit user balance when payment succeeds
+          creditBalance(phone, amount);
+
+          return res.json({
+            success: true,
+            message: "Payment completed",
+            transaction_code: statusResult.transaction_code,
+            phone,
+            amount,
+            reference,
+            checkout_request_id: checkoutRequestId,
+            status: "completed",
+            balance: getBalance(phone)
+          });
+        } else if (statusResult.status === "failed") {
+          return res.json({
+            success: false,
+            message: "Payment failed",
+            phone,
+            amount,
+            reference,
+            checkout_request_id: checkoutRequestId,
+            status: "failed"
+          });
+        }
+      }
+
+      attempt++;
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+
+    // Timeout if still pending
+    res.json({
+      success: false,
+      message: "Payment status check timeout - still pending",
       phone,
       amount,
+      reference,
+      checkout_request_id: checkoutRequestId,
+      status: "pending",
+      lastStatus: statusResult
     });
+
   } catch (err) {
     console.error("STK Push Error:", err.message);
-    return res.status(500).json(formatError("Internal server error", err.message));
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
 // ========================
-// Transaction Status
+// Check Transaction Status
 // ========================
 app.post("/transaction/status", async (req, res) => {
   try {
     const { checkout_request_id, phone, amount } = req.body;
 
     if (!checkout_request_id) {
-      return res.status(400).json(formatError("checkout_request_id is required"));
+      return res.status(400).json({ success: false, message: "checkout_request_id is required" });
     }
 
     const statusResponse = await axios.post(
@@ -240,8 +274,8 @@ app.post("/transaction/status", async (req, res) => {
         headers: {
           "X-API-Key": API_KEY,
           "X-API-Secret": API_SECRET,
-          "Content-Type": "application/json",
-        },
+          "Content-Type": "application/json"
+        }
       }
     );
 
@@ -249,42 +283,46 @@ app.post("/transaction/status", async (req, res) => {
 
     if (statusResult.success) {
       if (statusResult.status === "completed" && phone && amount) {
-        creditBalance(phone, amount);
+        creditBalance(phone, amount); // ✅ Update balance if not already credited
       }
 
-      return res.json({
+      res.json({
         success: true,
         status: statusResult.status,
         transaction_code: statusResult.transaction_code || null,
         checkout_request_id,
         balance: phone ? getBalance(phone) : undefined,
-        message: `Transaction is ${statusResult.status}`,
+        message: `Transaction is ${statusResult.status}`
       });
     } else {
-      return res.json(
-        formatError("Failed to check transaction status", statusResult)
-      );
+      res.json({
+        success: false,
+        message: "Failed to check transaction status",
+        checkout_request_id
+      });
     }
+
   } catch (err) {
     console.error("Status Check Error:", err.message);
-    res.status(500).json(formatError("Internal server error", err.message));
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
 // ========================
-// Balance Check
+// Balance Check (Real from memory)
 // ========================
 app.post("/balance/check", (req, res) => {
   try {
     const { phone } = req.body;
 
     if (!phone) {
-      return res.status(400).json(formatError("Phone number is required"));
+      return res.status(400).json({ success: false, message: "Phone number is required" });
     }
 
+    // Validate that user exists
     const user = getUserByPhone(phone);
     if (!user) {
-      return res.status(404).json(formatError("User not found"));
+      return res.status(404).json({ success: false, message: "User not found" });
     }
 
     const balance = getBalance(phone);
@@ -295,33 +333,35 @@ app.post("/balance/check", (req, res) => {
       currency: "KSh",
       phone,
       timestamp: new Date().toISOString(),
-      message: "Balance retrieved successfully",
+      message: "Balance retrieved successfully"
     });
+
   } catch (err) {
     console.error("Balance Check Error:", err.message);
-    res.status(500).json(formatError("Internal server error", err.message));
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
 // ========================
-// Get All Users
+// Get All Users (for admin purposes)
 // ========================
 app.get("/api/users", (req, res) => {
   try {
-    const userList = Object.values(users).map((user) => ({
+    const userList = Object.values(users).map(user => ({
       email: user.email,
       phone: user.phone,
-      balance: getBalance(user.phone),
+      balance: getBalance(user.phone)
     }));
-
-    res.json({
+    
+    res.json({ 
       success: true,
       users: userList,
-      total: userList.length,
+      total: userList.length
     });
+
   } catch (err) {
     console.error("Get users error:", err.message);
-    res.status(500).json(formatError("Internal server error", err.message));
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
@@ -329,12 +369,12 @@ app.get("/api/users", (req, res) => {
 // Health Check
 // ========================
 app.get("/health", (req, res) => {
-  res.json({
-    success: true,
-    message: "PayFlow Server is running",
+  res.json({ 
+    success: true, 
+    message: "PayFlow Server is running", 
     timestamp: new Date().toISOString(),
     totalUsers: Object.keys(users).length,
-    totalBalance: Object.values(balances).reduce((sum, bal) => sum + bal, 0),
+    totalBalance: Object.values(balances).reduce((sum, bal) => sum + bal, 0)
   });
 });
 
@@ -344,7 +384,5 @@ app.get("/health", (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 PayFlow Server running on port ${PORT}`);
-  console.log(
-    `📱 Ready to handle Firebase authentication and M-Pesa transactions`
-  );
+  console.log(`📱 Ready to handle Firebase authentication and M-Pesa transactions`);
 });
