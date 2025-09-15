@@ -18,7 +18,7 @@ app.use(express.static(path.join(__dirname, ".")));
 app.use(
   cors({
     origin: [
-      "https://funny-tanuki-b344b5.netlify.app",
+      "https://beamish-dodol-44ea30.netlify.app",
       "http://localhost:5000",
       "http://127.0.0.1:5000",
     ],
