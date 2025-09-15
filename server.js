@@ -4,6 +4,7 @@ import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
+import PDFDocument from "pdfkit";
 
 dotenv.config();
 
@@ -12,159 +13,135 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(express.json());
+app.use(express.static(path.join(__dirname, ".")));
 
-// ✅ Serve static files (index.html, etc.)
-app.use(express.static(path.join(__dirname, '.')));
+app.use(
+  cors({
+    origin: [
+      "https://funny-tanuki-b344b5.netlify.app",
+      "http://localhost:5000",
+      "http://127.0.0.1:5000",
+    ],
+    credentials: true,
+  })
+);
 
-// ✅ Allow requests from multiple origins for development and production
-app.use(cors({
-  origin: [
-    "https://funny-tanuki-b344b5.netlify.app",
-    "http://localhost:5000",
-    "http://0.0.0.0:5000",
-    "http://127.0.0.1:5000"
-  ],
-  credentials: true
-}));
+// ========================
+// Memory Stores
+// ========================
+const balances = {};
+const users = {};
+const phoneToEmail = {};
+const transactions = {}; // { phone: [ {id, type, amount, status, timestamp} ] }
 
-// Load credentials from Environment Variables
 const API_KEY = process.env.SPAWIKO_API_KEY;
 const API_SECRET = process.env.SPAWIKO_API_SECRET;
 const PAYMENT_ACCOUNT_ID = process.env.SPAWIKO_ACCOUNT_ID || 17;
 
 // ========================
-// In-memory stores
+// Helpers
 // ========================
-const balances = {}; // { phone: balance }
-const users = {}; // { email: { phone, email } }
-const phoneToEmail = {}; // { phone: email }
-
-// Helper functions for user management
 function createUser(email, phone) {
   users[email] = { email, phone };
   phoneToEmail[phone] = email;
   if (!balances[phone]) balances[phone] = 0;
+  if (!transactions[phone]) transactions[phone] = [];
   return users[email];
 }
-
 function getUserByEmail(email) {
   return users[email];
 }
-
 function getUserByPhone(phone) {
   const email = phoneToEmail[phone];
   return email ? users[email] : null;
 }
-
-// Helper functions for balance management
 function creditBalance(phone, amount) {
   if (!balances[phone]) balances[phone] = 0;
   balances[phone] += Number(amount);
   return balances[phone];
 }
-
 function getBalance(phone) {
   return balances[phone] || 0;
 }
+function addTransaction(phone, tx) {
+  if (!transactions[phone]) transactions[phone] = [];
+  transactions[phone].push(tx);
+}
+function generateReceiptPDFBase64(receipt) {
+  return new Promise((resolve) => {
+    const doc = new PDFDocument();
+    const chunks = [];
+    doc.on("data", (c) => chunks.push(c));
+    doc.on("end", () => {
+      resolve(Buffer.concat(chunks).toString("base64"));
+    });
+
+    // Header
+    doc.fontSize(20).fillColor("#2C3E50").text("PayFlow Receipt", { align: "center" });
+    doc.moveDown();
+
+    doc.fontSize(12).fillColor("#000").text(`Phone: ${receipt.phone}`);
+    doc.text(`Amount: KSh ${receipt.amount}`);
+    doc.text(`Status: ${receipt.status}`);
+    doc.text(`Transaction ID: ${receipt.transaction_id}`);
+    doc.text(`Reference: ${receipt.reference}`);
+    doc.text(`Balance: KSh ${receipt.balance}`);
+    doc.text(`Date: ${new Date(receipt.timestamp).toLocaleString()}`);
+
+    // Stamp
+    let stamp = receipt.status === "completed" ? "APPROVED" : "PENDING APPROVAL";
+    let color = receipt.status === "completed" ? "green" : "orange";
+    doc.moveDown(2);
+    doc.fontSize(40).fillColor(color).text(stamp, { align: "center", opacity: 0.5 });
+
+    doc.end();
+  });
+}
 
 // ========================
-// User Registration Endpoint
+// User Routes
 // ========================
 app.post("/api/users", (req, res) => {
-  try {
-    const { email, phone } = req.body;
+  const { email, phone } = req.body;
+  if (!email || !phone)
+    return res.status(400).json({ success: false, message: "Email & phone required" });
 
-    if (!email || !phone) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Email and phone number are required" 
-      });
-    }
+  if (!phone.match(/^254[0-9]{9}$/))
+    return res.status(400).json({ success: false, message: "Invalid phone format" });
 
-    // Validate phone format
-    if (!phone.match(/^254[0-9]{9}$/)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Invalid phone number format. Use 254XXXXXXXXX" 
-      });
-    }
+  if (users[email] || phoneToEmail[phone])
+    return res.status(409).json({ success: false, message: "User exists" });
 
-    // Check if user already exists
-    if (users[email] || phoneToEmail[phone]) {
-      return res.status(409).json({ 
-        success: false, 
-        message: "User already exists with this email or phone number" 
-      });
-    }
-
-    // Create user
-    const user = createUser(email, phone);
-    
-    res.status(201).json({ 
-      success: true,
-      message: "User created successfully",
-      user: { email: user.email, phone: user.phone }
-    });
-
-  } catch (err) {
-    console.error("User registration error:", err.message);
-    res.status(500).json({ success: false, message: "Internal server error" });
-  }
+  const user = createUser(email, phone);
+  res.status(201).json({ success: true, user });
 });
 
-// ========================
-// Get User by Email (for login)
-// ========================
 app.get("/api/users/email/:email", (req, res) => {
-  try {
-    const email = decodeURIComponent(req.params.email);
-    const user = getUserByEmail(email);
-    
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "User not found" 
-      });
-    }
-
-    res.json({ 
-      success: true,
-      email: user.email,
-      phone: user.phone 
-    });
-
-  } catch (err) {
-    console.error("Get user error:", err.message);
-    res.status(500).json({ success: false, message: "Internal server error" });
-  }
+  const email = decodeURIComponent(req.params.email);
+  const user = getUserByEmail(email);
+  if (!user) return res.status(404).json({ success: false, message: "User not found" });
+  res.json({ success: true, ...user });
 });
 
 // ========================
-// Initiate STK Push + Poll Status
+// Deposit (STK Push)
 // ========================
 app.post("/stkpush", async (req, res) => {
   try {
     const { phone, amount } = req.body;
+    if (!phone || !amount)
+      return res.status(400).json({ success: false, message: "Phone & amount required" });
 
-    if (!phone || !amount) {
-      return res.status(400).json({ success: false, message: "Phone and amount are required" });
-    }
-
-    // Validate that user exists
     const user = getUserByPhone(phone);
-    if (!user) {
-      return res.status(404).json({ success: false, message: "User not found. Please sign up first." });
-    }
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
-    const reference = `ORDER_${Date.now()}`;
-
-    // --- Initiate STK Push ---
+    const reference = `DEP_${Date.now()}`;
     const payload = {
       payment_account_id: PAYMENT_ACCOUNT_ID,
       phone,
       amount,
       reference,
-      description: "PayFlow Deposit via M-Pesa"
+      description: "Deposit",
     };
 
     const stkResponse = await axios.post(
@@ -174,8 +151,8 @@ app.post("/stkpush", async (req, res) => {
         headers: {
           "X-API-Key": API_KEY,
           "X-API-Secret": API_SECRET,
-          "Content-Type": "application/json"
-        }
+          "Content-Type": "application/json",
+        },
       }
     );
 
@@ -183,73 +160,29 @@ app.post("/stkpush", async (req, res) => {
       return res.status(400).json(stkResponse.data);
     }
 
-    const checkoutRequestId = stkResponse.data.checkout_request_id;
+    // Simulate success immediately
+    creditBalance(phone, amount);
 
-    // --- Poll Payment Status ---
-    const maxAttempts = 24; // 2 minutes (5s * 24)
-    let attempt = 0;
-    let statusResult = null;
-
-    while (attempt < maxAttempts) {
-      const statusResponse = await axios.post(
-        "https://pay.spawiko.co.ke/api/v2/status.php",
-        { checkout_request_id: checkoutRequestId },
-        {
-          headers: {
-            "X-API-Key": API_KEY,
-            "X-API-Secret": API_SECRET,
-            "Content-Type": "application/json"
-          }
-        }
-      );
-
-      statusResult = statusResponse.data;
-
-      if (statusResult.success) {
-        if (statusResult.status === "completed") {
-          // ✅ Credit user balance when payment succeeds
-          creditBalance(phone, amount);
-
-          return res.json({
-            success: true,
-            message: "Payment completed",
-            transaction_code: statusResult.transaction_code,
-            phone,
-            amount,
-            reference,
-            checkout_request_id: checkoutRequestId,
-            status: "completed",
-            balance: getBalance(phone)
-          });
-        } else if (statusResult.status === "failed") {
-          return res.json({
-            success: false,
-            message: "Payment failed",
-            phone,
-            amount,
-            reference,
-            checkout_request_id: checkoutRequestId,
-            status: "failed"
-          });
-        }
-      }
-
-      attempt++;
-      await new Promise(resolve => setTimeout(resolve, 5000));
-    }
-
-    // Timeout if still pending
-    res.json({
-      success: false,
-      message: "Payment status check timeout - still pending",
+    const receipt = {
       phone,
       amount,
+      status: "completed",
+      transaction_id: stkResponse.data.checkout_request_id,
       reference,
-      checkout_request_id: checkoutRequestId,
-      status: "pending",
-      lastStatus: statusResult
+      balance: getBalance(phone),
+      timestamp: new Date().toISOString(),
+    };
+
+    addTransaction(phone, {
+      id: receipt.transaction_id,
+      type: "deposit",
+      amount,
+      status: "success",
+      timestamp: receipt.timestamp,
     });
 
+    const pdf = await generateReceiptPDFBase64(receipt);
+    res.json({ success: true, receipt, pdf });
   } catch (err) {
     console.error("STK Push Error:", err.message);
     res.status(500).json({ success: false, message: "Internal server error" });
@@ -257,132 +190,78 @@ app.post("/stkpush", async (req, res) => {
 });
 
 // ========================
-// Check Transaction Status
+// Withdraw (Virtual Pending)
 // ========================
-app.post("/transaction/status", async (req, res) => {
+app.post("/withdraw", async (req, res) => {
   try {
-    const { checkout_request_id, phone, amount } = req.body;
+    const { phone, amount, pin } = req.body;
+    if (!phone || !amount || !pin)
+      return res.status(400).json({ success: false, message: "Phone, amount, pin required" });
 
-    if (!checkout_request_id) {
-      return res.status(400).json({ success: false, message: "checkout_request_id is required" });
-    }
+    const user = getUserByPhone(phone);
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
-    const statusResponse = await axios.post(
-      "https://pay.spawiko.co.ke/api/v2/status.php",
-      { checkout_request_id },
-      {
-        headers: {
-          "X-API-Key": API_KEY,
-          "X-API-Secret": API_SECRET,
-          "Content-Type": "application/json"
-        }
-      }
-    );
+    if (getBalance(phone) < amount)
+      return res.status(400).json({ success: false, message: "Insufficient balance" });
 
-    const statusResult = statusResponse.data;
+    balances[phone] -= Number(amount);
 
-    if (statusResult.success) {
-      if (statusResult.status === "completed" && phone && amount) {
-        creditBalance(phone, amount); // ✅ Update balance if not already credited
-      }
+    const receipt = {
+      phone,
+      amount,
+      status: "pending",
+      transaction_id: `WDR_${Date.now()}`,
+      reference: `WITHDRAW_${Date.now()}`,
+      balance: getBalance(phone),
+      timestamp: new Date().toISOString(),
+    };
 
-      res.json({
-        success: true,
-        status: statusResult.status,
-        transaction_code: statusResult.transaction_code || null,
-        checkout_request_id,
-        balance: phone ? getBalance(phone) : undefined,
-        message: `Transaction is ${statusResult.status}`
-      });
-    } else {
-      res.json({
-        success: false,
-        message: "Failed to check transaction status",
-        checkout_request_id
-      });
-    }
+    addTransaction(phone, {
+      id: receipt.transaction_id,
+      type: "withdraw",
+      amount,
+      status: "pending",
+      timestamp: receipt.timestamp,
+    });
 
+    const pdf = await generateReceiptPDFBase64(receipt);
+    res.json({ success: true, message: "Withdrawal pending approval", receipt, pdf });
   } catch (err) {
-    console.error("Status Check Error:", err.message);
+    console.error("Withdraw Error:", err.message);
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
 // ========================
-// Balance Check (Real from memory)
+// Check Balance
 // ========================
 app.post("/balance/check", (req, res) => {
-  try {
-    const { phone } = req.body;
+  const { phone } = req.body;
+  if (!phone) return res.status(400).json({ success: false, message: "Phone required" });
+  const user = getUserByPhone(phone);
+  if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
-    if (!phone) {
-      return res.status(400).json({ success: false, message: "Phone number is required" });
-    }
-
-    // Validate that user exists
-    const user = getUserByPhone(phone);
-    if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
-    }
-
-    const balance = getBalance(phone);
-
-    res.json({
-      success: true,
-      balance,
-      currency: "KSh",
-      phone,
-      timestamp: new Date().toISOString(),
-      message: "Balance retrieved successfully"
-    });
-
-  } catch (err) {
-    console.error("Balance Check Error:", err.message);
-    res.status(500).json({ success: false, message: "Internal server error" });
-  }
+  res.json({ success: true, balance: getBalance(phone) });
 });
 
 // ========================
-// Get All Users (for admin purposes)
+// Transactions History
 // ========================
-app.get("/api/users", (req, res) => {
-  try {
-    const userList = Object.values(users).map(user => ({
-      email: user.email,
-      phone: user.phone,
-      balance: getBalance(user.phone)
-    }));
-    
-    res.json({ 
-      success: true,
-      users: userList,
-      total: userList.length
-    });
-
-  } catch (err) {
-    console.error("Get users error:", err.message);
-    res.status(500).json({ success: false, message: "Internal server error" });
-  }
+app.post("/transactions", (req, res) => {
+  const { phone } = req.body;
+  if (!phone) return res.status(400).json({ success: false, message: "Phone required" });
+  res.json({ success: true, transactions: transactions[phone] || [] });
 });
 
 // ========================
-// Health Check
+// Health
 // ========================
 app.get("/health", (req, res) => {
-  res.json({ 
-    success: true, 
-    message: "PayFlow Server is running", 
-    timestamp: new Date().toISOString(),
-    totalUsers: Object.keys(users).length,
-    totalBalance: Object.values(balances).reduce((sum, bal) => sum + bal, 0)
-  });
+  res.json({ success: true, message: "Server running" });
 });
 
 // ========================
-// Start Server
+// Start
 // ========================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 PayFlow Server running on port ${PORT}`);
-  console.log(`📱 Ready to handle Firebase authentication and M-Pesa transactions`);
-});
+app.listen(PORT, () => console.log(`🚀 Server running on ${PORT}`));
