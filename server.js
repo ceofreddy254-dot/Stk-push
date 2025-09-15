@@ -18,7 +18,7 @@ app.use(express.static(path.join(__dirname, ".")));
 app.use(
   cors({
     origin: [
-      "https://beamish-dodol-44ea30.netlify.app",
+      " https://jovial-elf-f81e59.netlify.app",
       "http://localhost:5000",
       "http://127.0.0.1:5000",
     ],
@@ -194,9 +194,9 @@ app.post("/stkpush", async (req, res) => {
 // ========================
 app.post("/withdraw", async (req, res) => {
   try {
-    const { phone, amount, pin } = req.body;
-    if (!phone || !amount || !pin)
-      return res.status(400).json({ success: false, message: "Phone, amount, pin required" });
+    const { phone, amount } = req.body;
+    if (!phone || !amount)
+      return res.status(400).json({ success: false, message: "Phone & amount required" });
 
     const user = getUserByPhone(phone);
     if (!user) return res.status(404).json({ success: false, message: "User not found" });
