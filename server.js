@@ -23,7 +23,7 @@ app.use(
     origin:
       process.env.NODE_ENV === "development"
         ? ["http://localhost:5000", "http://127.0.0.1:5000"]
-        : ["https://funny-tanuki-b344b5.netlify.app"],
+        : ["https://stunning-centaur-53c66c.netlify.app"],
     credentials: true,
   })
 );
