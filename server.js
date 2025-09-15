@@ -23,6 +23,22 @@ const API_SECRET = process.env.SPAWIKO_API_SECRET;
 const PAYMENT_ACCOUNT_ID = process.env.SPAWIKO_ACCOUNT_ID || 17;
 
 // ========================
+// In-memory balances store
+// ========================
+const balances = {}; // { phone: balance }
+
+// Helper functions
+function creditBalance(phone, amount) {
+  if (!balances[phone]) balances[phone] = 0;
+  balances[phone] += Number(amount);
+  return balances[phone];
+}
+
+function getBalance(phone) {
+  return balances[phone] || 0;
+}
+
+// ========================
 // Initiate STK Push + Poll Status
 // ========================
 app.post("/stkpush", async (req, res) => {
@@ -84,6 +100,9 @@ app.post("/stkpush", async (req, res) => {
 
       if (statusResult.success) {
         if (statusResult.status === "completed") {
+          // ✅ Credit user balance when payment succeeds
+          creditBalance(phone, amount);
+
           return res.json({
             success: true,
             message: "Payment completed",
@@ -92,7 +111,8 @@ app.post("/stkpush", async (req, res) => {
             amount,
             reference,
             checkout_request_id: checkoutRequestId,
-            status: "completed"
+            status: "completed",
+            balance: getBalance(phone)
           });
         } else if (statusResult.status === "failed") {
           return res.json({
@@ -134,7 +154,7 @@ app.post("/stkpush", async (req, res) => {
 // ========================
 app.post("/transaction/status", async (req, res) => {
   try {
-    const { checkout_request_id } = req.body;
+    const { checkout_request_id, phone, amount } = req.body;
 
     if (!checkout_request_id) {
       return res.status(400).json({ success: false, message: "checkout_request_id is required" });
@@ -155,11 +175,16 @@ app.post("/transaction/status", async (req, res) => {
     const statusResult = statusResponse.data;
 
     if (statusResult.success) {
+      if (statusResult.status === "completed" && phone && amount) {
+        creditBalance(phone, amount); // ✅ Update balance if not already credited
+      }
+
       res.json({
         success: true,
         status: statusResult.status,
         transaction_code: statusResult.transaction_code || null,
         checkout_request_id,
+        balance: phone ? getBalance(phone) : undefined,
         message: `Transaction is ${statusResult.status}`
       });
     } else {
@@ -177,67 +202,9 @@ app.post("/transaction/status", async (req, res) => {
 });
 
 // ========================
-// Bulk Status Check (for multiple transactions)
+// Balance Check (Real from memory)
 // ========================
-app.post("/transactions/status", async (req, res) => {
-  try {
-    const { checkout_request_ids } = req.body;
-
-    if (!checkout_request_ids || !Array.isArray(checkout_request_ids)) {
-      return res.status(400).json({ success: false, message: "checkout_request_ids array is required" });
-    }
-
-    const results = [];
-
-    for (const checkout_request_id of checkout_request_ids) {
-      try {
-        const statusResponse = await axios.post(
-          "https://pay.spawiko.co.ke/api/v2/status.php",
-          { checkout_request_id },
-          {
-            headers: {
-              "X-API-Key": API_KEY,
-              "X-API-Secret": API_SECRET,
-              "Content-Type": "application/json"
-            }
-          }
-        );
-
-        const statusResult = statusResponse.data;
-
-        results.push({
-          checkout_request_id,
-          success: statusResult.success,
-          status: statusResult.status || "unknown",
-          transaction_code: statusResult.transaction_code || null
-        });
-
-      } catch (err) {
-        results.push({
-          checkout_request_id,
-          success: false,
-          status: "error",
-          transaction_code: null,
-          error: err.message
-        });
-      }
-    }
-
-    res.json({
-      success: true,
-      results
-    });
-
-  } catch (err) {
-    console.error("Bulk Status Check Error:", err.message);
-    res.status(500).json({ success: false, message: "Internal server error" });
-  }
-});
-
-// ========================
-// Check Balance (Simulated)
-// ========================
-app.post("/balance/check", async (req, res) => {
+app.post("/balance/check", (req, res) => {
   try {
     const { phone } = req.body;
 
@@ -245,17 +212,11 @@ app.post("/balance/check", async (req, res) => {
       return res.status(400).json({ success: false, message: "Phone number is required" });
     }
 
-    // Simulate balance check delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    // Simulate balance with some variation
-    const baseBalance = 5000;
-    const variation = (Math.random() - 0.5) * 1000; // ±500 KSh variation
-    const balance = Math.max(0, baseBalance + variation);
-    
+    const balance = getBalance(phone);
+
     res.json({
       success: true,
-      balance: Math.round(balance * 100) / 100, // Round to 2 decimal places
+      balance,
       currency: "KSh",
       phone,
       timestamp: new Date().toISOString(),
