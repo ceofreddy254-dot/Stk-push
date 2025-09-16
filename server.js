@@ -19,7 +19,7 @@ app.use(express.static(path.join(__dirname, '.')));
 // ✅ Allow requests from multiple origins for development and production
 app.use(cors({
   origin: [
-    "https://aesthetic-taiyaki-9db70d.netlify.app",
+    "https://roaring-cassata-21b993.netlify.app",
     "https://radiant-frangollo-1c8aad.netlify.app",
     "http://0.0.0.0:5000",
     "http://127.0.0.1:5000"
