@@ -20,7 +20,7 @@ app.use(express.static(path.join(__dirname, '.')));
 app.use(cors({
   origin: [
     "https://aesthetic-taiyaki-9db70d.netlify.app",
-    "http://localhost:5000",
+    "https://radiant-frangollo-1c8aad.netlify.app",
     "http://0.0.0.0:5000",
     "http://127.0.0.1:5000"
   ],
