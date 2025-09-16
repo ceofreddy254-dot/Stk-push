@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "Node.js server for Spawiko STK Push integration",
   "main": "server.js",
-  "type": "module",
   "scripts": {
     "start": "node server.js"
   },
