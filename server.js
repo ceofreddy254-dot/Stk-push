@@ -10,7 +10,7 @@ app.use(express.json());
 // ✅ Updated CORS to allow your frontend domains
 app.use(cors({
   origin: [
-    "https://starlit-haupia-69559a.netlify.app",
+    "https://payment254test.netlify.app",
     "http://localhost:3000", 
     "https://*.replit.dev",
     "*" // Allow all origins for testing - remove in production
