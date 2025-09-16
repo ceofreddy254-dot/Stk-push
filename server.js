@@ -12,7 +12,7 @@ app.use(express.json());
 app.use(cors({
   origin: [
     "https://payment254test.netlify.app",
-    "https://celebrated-marzipan-c42cc7.netlify.app", // Add your actual Netlify domain
+    "https://aesthetic-dolphin-cd6fba.netlify.app/", // Add your actual Netlify domain
     "http://localhost:3000", 
     "https://*.replit.dev",
     "*" // Remove in production
