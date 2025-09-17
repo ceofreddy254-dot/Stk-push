@@ -13,7 +13,7 @@ app.use(cors({
   origin: [
     "https://payment254test.netlify.app",
     "https://aesthetic-dolphin-cd6fba.netlify.app", // Add your actual Netlify domain
-    "http://localhost:3000", 
+    "https://aesthetic-dolphin-cd6fba.netlify.app", 
     "https://*.replit.dev",
     "*" // Remove in production
   ],
