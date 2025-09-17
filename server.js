@@ -13,6 +13,7 @@ app.use(cors({
   origin: [
     "https://payment254test.netlify.app",
     "https://aesthetic-dolphin-cd6fba.netlify.app", // Add your actual Netlify domain
+    "https://aesthetic-dolphin-cd6fba.netlify.app", 
     "https://*.replit.dev",
     "*" // Remove in production
   ],
@@ -68,17 +69,17 @@ function generatePaymentId() {
 async function checkPaymentStatus(checkoutRequestId) {
   try {
     console.log(`🔍 Checking payment status for: ${checkoutRequestId}`);
-const statusResponse = await axios.post(
-  "https://pay.spawiko.co.ke/status",   // ✅ updated endpoint
-  { checkout_request_id: checkoutRequestId },
-  {
-    headers: {
-      "X-API-Key": API_KEY,
-      "X-API-Secret": API_SECRET,
-      "Content-Type": "application/json"
-    }
-  }
-);
+    const statusResponse = await axios.post(
+      "https://pay.spawiko.co.ke/api/v2/status",
+      { checkout_request_id: checkoutRequestId },
+      {
+        headers: {
+          "X-API-Key": API_KEY,
+          "X-API-Secret": API_SECRET,
+          "Content-Type": "application/json"
+        }
+      }
+    );
     console.log('📊 Status check response:', statusResponse.data);
     return statusResponse.data;
   } catch (error) {
@@ -162,17 +163,18 @@ app.post("/stkpush", async (req, res) => {
       description
     };
 
+    console.log('📤 Sending STK Push to Spawiko API');
     const stkResponse = await axios.post(
-  "https://pay.spawiko.co.ke/stkpush",   // ✅ updated endpoint
-  payload,
-  {
-    headers: {
-      "X-API-Key": API_KEY,
-      "X-API-Secret": API_SECRET,
-      "Content-Type": "application/json"
-    }
-  }
-);
+      "https://pay.spawiko.co.ke/api/v2/stkpush",
+      payload,
+      {
+        headers: {
+          "X-API-Key": API_KEY,
+          "X-API-Secret": API_SECRET,
+          "Content-Type": "application/json"
+        }
+      }
+    );
 
     console.log('📥 STK Push response:', stkResponse.data);
 
