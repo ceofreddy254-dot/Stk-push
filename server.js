@@ -11,7 +11,7 @@ app.use(express.json());
 // ✅ Updated CORS
 app.use(cors({
   origin: [
-    "https://payment254test.netlify.app",
+    "https://spawiko2.onrender.com",
     "https://aesthetic-dolphin-cd6fba.netlify.app",
     "https://*.replit.dev",
     "*" // ⚠️ Remove in production
